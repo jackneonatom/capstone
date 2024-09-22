@@ -1,4 +1,3 @@
-Here’s a formatted GitHub README based on your provided text:
 
 ---
 
