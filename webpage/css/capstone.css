@@ -1,0 +1,50 @@
+body{
+    background-color: rgb(224, 167, 91);
+    display: flex;
+    justify-content: space-around;
+}
+
+
+
+#vechiles{
+    display: flex;
+    /* background-color: antiquewhite; */
+    justify-content: center;
+   justify-content: space-between;
+    flex-direction: row;
+    padding-left: 10%;
+    padding-right: 10%;
+}
+img{
+    width: 95%;
+}
+
+.vechile_bars{
+    display: flex;
+    background-color: rgb(210, 219, 219);
+    flex-direction: column;
+    justify-content: space-around;
+    align-items: center;
+    border: 10px;
+    height: 260px;
+    width: 20%;
+    border-radius: 10%;
+    border-color: black;
+    
+    box-shadow:0 2px 5px 0 rgba(0,0,0,0.16),0 2px 10px 0 rgba(0,0,0,0.12)
+}
+.vechile_img
+{
+    height:50%;
+    width: 90%;
+}
+.vechile_count{
+    background-color: rgb(240, 147, 25);
+    border-radius: 50%;
+    height: 7%;
+    width: 23%;
+    justify-content: center;
+    display: flex;
+    padding-bottom: 50px;
+  
+}
