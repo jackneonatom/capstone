@@ -48,10 +48,10 @@ img {
 }
 
 .vechile_count {
-    background-color: rgb(240, 147, 25);
+    /* background-color: rgb(240, 147, 25); */
     border-radius: 50%;
     height: 25%;
-    width: 23%;
+    width: fit-content;
     display: flex;
     justify-content: center;
     align-items: center;
