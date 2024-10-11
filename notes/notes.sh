@@ -59,3 +59,7 @@ show dbs
  use PVdemo
  show collections
  db.readings.find()
+
+
+# frequency over a time period or different periods and then compare data
+have drop down menu on each icon that shows different frequecnies in different time periods

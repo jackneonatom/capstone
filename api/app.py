@@ -40,7 +40,7 @@ async def get_historical_data():
                 "Bike_Count": reading["Bike_Count"], 
                 "Ped_Count": reading["Ped_Count"], 
                 "Battery_Percentage": reading["Battery_Percentage"]
-                
+                           
             }
             for reading in readings
         ]
