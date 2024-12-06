@@ -60,6 +60,12 @@ show dbs
  show collections
  db.readings.find()
 
+ sudo apt update
+sudo apt install vlc -y
+vlc v4l2:///dev/video0
+
+
+
 
 # frequency over a time period or different periods and then compare data
 have drop down menu on each icon that shows different frequecnies in different time periods
