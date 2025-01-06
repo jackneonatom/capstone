@@ -6,7 +6,7 @@
 
 body {
     background-color: rgb(224, 167, 91);
-    background-image: url(/webpage/imgs/ioswallpaper.png);
+    background-image: url(/imgs/ioswallpaper.png);
     display: flex;
     justify-content: space-around;
     flex-direction: column;
