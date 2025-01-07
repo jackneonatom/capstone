@@ -1,12 +1,5 @@
 import asyncio
-# import RPi.GPIO as GPIO  # Import Raspberry Pi GPIO library
-from app import store_data  # Assuming store_data is defined in app.py
-import aiohttp
-
-LED_PIN = 21  # GPIO pin where the LED is connected
-
-# GPIO.setmode(GPIO.BCM)
-# GPIO.setup(LED_PIN, GPIO.OUT)
+from vehcnt import store_data  # Assuming store_data is defined in app.py
 
 def read_battery_voltage():
     return 32
@@ -35,18 +28,20 @@ def read_load_current():
 def read_load_voltage():
     return 37
 
-
 def car_counter():
     return 69
+
 def truck_counter():
     return 32
+
 def bike_counter():
     return 5
+
 def ped_counter():
     return 16
+
 def battery_percent():
     return 100
-
 
 async def main():
     battery_current_reading = read_battery_current()
@@ -59,14 +54,14 @@ async def main():
     load_current_reading = read_load_current()
     load_voltage_reading = read_load_voltage()
 
-    car_count= car_counter()
-    truck_count=truck_counter()
-    bike_count=bike_counter()
-    ped_count=ped_counter()
-    battery_percentage=battery_percent()
+    car_count = car_counter()
+    truck_count = truck_counter()
+    bike_count = bike_counter()
+    ped_count = ped_counter()
+    battery_percentage = battery_percent()
 
-
-    task = asyncio.create_task(store_data(car_count,truck_count,bike_count,ped_count,battery_percentage))
-    print("Data stored (or task created for storing data).")
+    # Call the updated store_data function
+    await store_data(car_count, truck_count, bike_count, ped_count, battery_percentage)
+    print("Data stored successfully.")
 
 asyncio.run(main())
