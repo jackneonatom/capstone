@@ -1,3 +1,6 @@
+ssh -i id_rsa.pub ubuntu@164.152.104.200
+
+
 sudo apt update
 sudo apt upgrade
 sudo apt install nginx
