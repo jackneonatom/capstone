@@ -1,5 +1,7 @@
-import asyncio
-from vehcnt import store_data  # Assuming store_data is defined in app.py
+import httpx
+
+# Define the cloud API URL
+CLOUD_API_URL = "http://129.213.84.3:8002/store"
 
 def read_battery_voltage():
     return 32
@@ -43,6 +45,24 @@ def ped_counter():
 def battery_percent():
     return 100
 
+async def store_data_to_cloud(ccount: float, tcount: float, bcount: float, pcount: float, bpercent: float):
+    data = {
+        "car_count": ccount,
+        "truck_count": tcount,
+        "bike_count": bcount,
+        "ped_count": pcount,
+        "battery_percentage": bpercent
+    }
+    try:
+        async with httpx.AsyncClient() as client:
+            response = await client.post(CLOUD_API_URL, json=data)
+            response.raise_for_status()  # Raise an exception for HTTP errors
+            print(f"Data stored successfully. Response: {response.text}")
+    except httpx.RequestError as e:
+        print(f"An error occurred while trying to reach the API: {e}")
+    except httpx.HTTPStatusError as e:
+        print(f"Error response {e.response.status_code}: {e.response.text}")
+
 async def main():
     battery_current_reading = read_battery_current()
     battery_voltage_reading = read_battery_voltage()
@@ -60,8 +80,8 @@ async def main():
     ped_count = ped_counter()
     battery_percentage = battery_percent()
 
-    # Call the updated store_data function
-    await store_data(car_count, truck_count, bike_count, ped_count, battery_percentage)
-    print("Data stored successfully.")
+    await store_data_to_cloud(car_count, truck_count, bike_count, ped_count, battery_percentage)
 
-asyncio.run(main())
+if __name__ == "__main__":
+    import asyncio
+    asyncio.run(main())
