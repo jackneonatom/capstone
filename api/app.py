@@ -109,6 +109,22 @@ async def get_historical_data():
         return historical_data
     except Exception as e:
         raise HTTPException(status_code=500, detail="Failed to fetch historical data")
+    
+
+@app.post("/store")
+async def store_data_endpoint(data: dict):
+    try:
+        ccount = data["car_count"]
+        tcount = data["truck_count"]
+        bcount = data["bike_count"]
+        pcount = data["ped_count"]
+        bpercent = data["battery_percentage"]
+
+        await store_data(ccount, tcount, bcount, pcount, bpercent)
+        return {"message": "Data stored successfully"}
+    except KeyError as e:
+        raise HTTPException(status_code=400, detail=f"Missing field: {e}")
+
 
 async def store_data(ccount: float, tcount: float, bcount: float, pcount: float, bpercent: float):
     try:
@@ -121,8 +137,8 @@ async def store_data(ccount: float, tcount: float, bcount: float, pcount: float,
         conn.commit()
         conn.close()
     except Exception as e:
-        raise HTTPException(status_code=500, detail="Failed to store data")
+        raise HTTPException(status_code=500, detail="Failed to store data")  
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run("vehcnt:app", host="0.0.0.0")
+    uvicorn.run("vehcnt:app", host="0.0.0.0", port=8002)
