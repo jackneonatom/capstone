@@ -68,7 +68,7 @@ sudo apt install vlc -y
 vlc v4l2:///dev/video0
 
 
-
+docker run --name postgresdb -e POSTGRES_USER=admin -e POSTGRES_PASSWORD=admin123 -e POSTGRES_DB=vehiclecounter -p 5432:5432 -d postgres:latest -e TZ=America/Bogota
 
 # frequency over a time period or different periods and then compare data
 have drop down menu on each icon that shows different frequecnies in different time periods
