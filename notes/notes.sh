@@ -91,3 +91,19 @@ docker run --name postgresdb -e POSTGRES_USER=admin -e POSTGRES_PASSWORD=admin12
 
 # frequency over a time period or different periods and then compare data
 #have drop down menu on each icon that shows different frequecnies in different time periods
+ubuntu@vehiclecounter:~$ sudo docker exec -it 1c11e5b441a5 bash
+root@1c11e5b441a5:/# psql -U admin -d vehiclecounter
+psql (17.2 (Debian 17.2-1.pgdg120+1))
+Type "help" for help.
+
+vehiclecounter=# select * from vehiclecounter
+vehiclecounter-# ;
+ERROR:  relation "vehiclecounter" does not exist
+LINE 1: select * from vehiclecounter
+                      ^
+vehiclecounter=# select * from vehiclecounter;
+ERROR:  relation "vehiclecounter" does not exist
+LINE 1: select * from vehiclecounter;
+                      ^
+vehiclecounter=# select * from readings;
+
