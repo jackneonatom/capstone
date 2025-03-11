@@ -107,3 +107,6 @@ LINE 1: select * from vehiclecounter;
                       ^
 vehiclecounter=# select * from readings;
 
+curl -s https://install.zerotier.com | sudo bash
+zerotier-cli join 8BD5124FD6121937
+
