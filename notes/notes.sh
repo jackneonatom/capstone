@@ -87,7 +87,7 @@ vlc v4l2:///dev/video0
 
 #install postgres database in docker container
 
-docker run --name postgresdb -e POSTGRES_USER=admin -e POSTGRES_PASSWORD=admin123 -e POSTGRES_DB=vehiclecounter -e TZ=America/Bogota -p 5432:5432 -d postgres:latest 
+docker run --restart=always --name postgresdb -e POSTGRES_USER=admin -e POSTGRES_PASSWORD=admin123 -e POSTGRES_DB=vehiclecounter -e TZ=America/Bogota -p 5432:5432 -d postgres:latest 
 
 # frequency over a time period or different periods and then compare data
 #have drop down menu on each icon that shows different frequecnies in different time periods
