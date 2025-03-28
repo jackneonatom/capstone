@@ -88,7 +88,8 @@ vlc v4l2:///dev/video0
 #install postgres database in docker container
 
 docker run --restart=always --name postgresdb -e POSTGRES_USER=admin -e POSTGRES_PASSWORD=admin123 -e POSTGRES_DB=vehiclecounter -e TZ=America/Bogota -p 5432:5432 -d postgres:latest 
-
+pip install psycopg2-binary 
+pip install fastapi-mail
 # frequency over a time period or different periods and then compare data
 #have drop down menu on each icon that shows different frequecnies in different time periods
 ubuntu@vehiclecounter:~$ sudo docker exec -it 1c11e5b441a5 bash
@@ -109,4 +110,7 @@ vehiclecounter=# select * from readings;
 
 curl -s https://install.zerotier.com | sudo bash
 zerotier-cli join 8BD5124FD6121937
+
+sudo zerotier-cli listpeers
+sudo zerotier-cli info
 
