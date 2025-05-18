@@ -1,0 +1,5 @@
+[[redirects]]
+  from = "/api/*"  # Or whatever path you want on your Netlify site
+  to = "http://13.59.11.204/:splat" # Your EC2 instance's IP address
+  status = 200
+  proxy = true
