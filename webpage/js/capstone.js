@@ -1,6 +1,6 @@
 async function fetchData() {
     try {
-        const response = await fetch('http://ec2-13-59-11-204.us-east-2.compute.amazonaws.com:80/count', {
+        const response = await fetch('https://api.v-tally.com/api/count', {
             method: 'GET',
             headers: {
                 'Content-Type': 'application/json',
