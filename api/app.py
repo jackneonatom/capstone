@@ -9,7 +9,7 @@ def get_db_connection():
     try:
         conn = psycopg2.connect(
             database="vehiclecounter",
-            host="129.213.84.3",
+            host="v-tally.com",
             user="admin",
             password="admin123",
             port="5432"
