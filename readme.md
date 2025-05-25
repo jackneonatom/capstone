@@ -4,6 +4,7 @@
 # Automated Vehicle Counting Using Deep Learning
 
 ### Submitted by: Lindon Falconer
+### Chosen and completed by: Nathan Myrie 
 
 ## Project Overview
 
