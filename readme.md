@@ -85,3 +85,132 @@ The student is expected to learn these technologies during the first semester.
 
 ---
 
+# Automated Vehicle Counting Using Deep Learning
+
+**Authors:** Nathan Myrie
+**Supervisor:** Lindon Falconer
+**Academic Year:** 2024/25
+
+---
+
+## Table of Contents
+
+* [Project Overview](#project-overview)
+* [Objectives](#objectives)
+* [Background](#background)
+* [System Architecture](#system-architecture)
+* [Implementation & Methodology](#implementation--methodology)
+* [Hardware & Software Requirements](#hardware--software-requirements)
+* [Data Collection & Preparation](#data-collection--preparation)
+* [Model Training](#model-training)
+* [Deployment](#deployment)
+* [Results & Evaluation](#results--evaluation)
+* [Budget & Costs](#budget--costs)
+* [Future Work](#future-work)
+* [Acknowledgements](#acknowledgements)
+* [License](#license)
+
+---
+
+## Project Overview
+
+This project implements an automated traffic counting system using deep learning-based object detection and tracking. It captures live video feeds at the University of the West Indies main gate, identifies and counts vehicles and pedestrians in real time, and streams data to a web dashboard for visualization and analysis.
+
+## Objectives
+
+* Research and compare deep learning approaches for multi-class counting (cars, trucks, buses, bikes, pedestrians)
+* Develop and train a robust object detection model with transfer learning
+* Deploy the system on a resource-constrained edge device
+* Implement a wireless communication pipeline and web-based dashboard
+* Design a solar-powered enclosure for remote, off-grid deployment (design only)
+
+## Background
+
+Traditional traffic counters (pneumatic road tubes, piezo-electric sensors, inductive loops) are often intrusive, single-purpose, and require manual data retrieval. Modern video-based systems offer non-intrusive installation, real-time analytics, and multi-class classification, but are seldom optimized for low-power, remote deployments.
+
+## System Architecture
+
+```
+Camera --> Edge Device (Raspberry Pi 4B + Coral USB Accelerator)
+      --> Object Detection & Tracking (YOLOv11 + SORT)
+      --> Counting Logic
+      --> FastAPI Server
+      --> AWS PostgreSQL Database
+      --> Web Dashboard (React.js)
+```
+
+## Implementation & Methodology
+
+1. **Model Selection:** YOLOv11 and MobileNet-SSD evaluated for mAP and latency.
+2. **Transfer Learning:** Pre-trained on COCO dataset, fine-tuned with custom campus footage.
+3. **Tracking & Counting:** SORT algorithm assigns unique IDs and enforces virtual line logic.
+4. **Data Pipeline:** Counts POSTed via FastAPI to a cloud database; front-end polls API.
+
+## Hardware & Software Requirements
+
+* **Hardware:**
+
+  * Raspberry Pi 4B
+  * Coral USB Accelerator
+  * Outdoor USB camera
+  * MiFi hotspot (4G)
+  * Solar PV panels & battery (design)
+* **Software:**
+
+  * Python 3.x
+  * TensorFlow / PyTorch / OpenCV
+  * FastAPI / PostgreSQL
+  * React.js / Chart.js for dashboard
+
+## Data Collection & Preparation
+
+* **Sources:** Open Images, custom campus video (approx. 12,000 frames)
+* **Annotation:** Pascal VOC format, classes: car, truck, bus, bike, pedestrian
+* **Splits:** 70% training, 20% validation, 10% test
+
+## Model Training
+
+* **Environment:** Google Colab + Coral TPU
+* **Parameters:** 50 epochs, batch size 16, initial learning rate 1e-3
+* **Metrics:** mAP\@0.5, precision, recall, F1-score
+
+## Deployment
+
+* **Inference:** Process every 3rd frame at \~8 FPS on Pi+Coral
+* **Communication:** Counts sent every minute via HTTPS POST
+* **Dashboard:** Live count graphs, historical data filters, class breakdowns
+
+## Results & Evaluation
+
+* **Detection:** YOLOv11 achieved 82% mAP; SSD achieved 75% mAP.
+* **Throughput:** YOLOv11 \~7 FPS; SSD \~10 FPS on edge device.
+* **Counting Accuracy:** ±5% error vs. manual ground truth across test intervals.
+
+## Budget & Costs
+
+| Item                   | Cost (JMD)     |
+| ---------------------- | -------------- |
+| Initial Budget         | 100,000        |
+| Estimated Cost         | 35,000         |
+| **Total Expenditure**  | **110,879.48** |
+| Monthly Recurring Cost | 6,585.17       |
+
+> **Note:** Actual costs exceeded budget by \~10% and estimates by >200%, indicating the need for more accurate forecasting.
+
+## Future Work
+
+* Automate region-of-interest detection and dynamic virtual lines
+* Integrate additional sensors (e.g., LiDAR, radar) for robustness
+* Expand dataset with diverse lighting and weather conditions
+* Upgrade edge hardware (Jetson Nano, additional TPUs)
+
+## Acknowledgements
+
+* Supervisor: Lindon Falconer
+* Project Proposer: Lindon Falconer
+* Funding & Support: UWI Department of Engineering
+
+## License
+
+This project is licensed under the MIT License. See [LICENSE](LICENSE) for details.
+
