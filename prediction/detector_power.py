@@ -5,6 +5,8 @@ import numpy as np
 import requests
 import time
 import glob
+import threading
+import queue
 from collections import deque
 from datetime import datetime
 from smbus2 import SMBus
@@ -40,6 +42,16 @@ RECORDING_FPS = 15                 # Lower FPS for recording to save space
 RECORDING_DURATION = 300           # 5 minutes in seconds
 MAX_RECORDINGS = 100               # Maximum number of recordings to keep
 
+# Cloud sync settings
+CLOUD_SYNC_INTERVAL = 5           # Try to sync every 5 seconds
+CLOUD_RETRY_INTERVAL = 30         # Retry failed syncs every 30 seconds
+CLOUD_TIMEOUT = 2                 # Reduced timeout for faster failure detection
+MAX_QUEUE_SIZE = 100              # Maximum number of data points to queue
+
+# Region of Interest (ROI) settings
+ROI_ENABLED = True                # Enable ROI filtering
+roi_box = None                    # Will be set based on frame dimensions
+
 # Initialize counters and trackers
 counted_tracks = set()
 category_counts = {
@@ -54,6 +66,11 @@ track_id_class_map = {}
 
 # Track persistence for reducing duplicate counting
 track_persistence = {}  # track_id -> frame_count_when_first_seen
+
+# NEW: Track lifecycle management to prevent duplicate counting
+track_lifecycle = {}  # track_id -> {'first_seen': frame, 'last_seen': frame, 'counted': bool, 'category': str, 'in_roi': bool}
+TRACK_CLEANUP_INTERVAL = 150  # Clean up old tracks every N frames
+TRACK_MEMORY_FRAMES = 900     # Remember tracks for this many frames (~30 seconds at 30fps)
 
 # Color palette for different classes
 COLORS = {
@@ -73,6 +90,89 @@ bus = None
 video_writer = None
 recording_start_time = None
 current_recording_path = None
+
+# Cloud sync variables
+cloud_queue = queue.Queue(maxsize=MAX_QUEUE_SIZE)
+cloud_thread = None
+cloud_running = False
+last_sync_attempt = 0
+connection_status = "Unknown"
+last_successful_sync = 0
+
+def setup_roi(frame_width, frame_height):
+    """Set up the Region of Interest box (half the screen width, centered)"""
+    global roi_box
+    
+    # ROI covers half the screen width, centered horizontally
+    roi_width = frame_width // 2
+    roi_height = frame_height
+    roi_x = (frame_width - roi_width) // 2
+    roi_y = 0
+    
+    roi_box = {
+        'x1': roi_x,
+        'y1': roi_y,
+        'x2': roi_x + roi_width,
+        'y2': roi_y + roi_height
+    }
+    
+    print(f"ROI set up: x1={roi_x}, y1={roi_y}, x2={roi_x + roi_width}, y2={roi_y + roi_height}")
+    print(f"ROI dimensions: {roi_width}x{roi_height} (Frame: {frame_width}x{frame_height})")
+
+def is_in_roi(x1, y1, x2, y2):
+    """Check if a bounding box intersects with the ROI"""
+    if not ROI_ENABLED or roi_box is None:
+        return True
+    
+    # Check if bounding box intersects with ROI
+    # No intersection if one rectangle is completely to the left, right, above, or below the other
+    if (x2 < roi_box['x1'] or x1 > roi_box['x2'] or 
+        y2 < roi_box['y1'] or y1 > roi_box['y2']):
+        return False
+    
+    return True
+
+def get_bbox_center(x1, y1, x2, y2):
+    """Get the center point of a bounding box"""
+    return ((x1 + x2) // 2, (y1 + y2) // 2)
+
+def is_center_in_roi(x1, y1, x2, y2):
+    """Check if the center of a bounding box is within the ROI"""
+    if not ROI_ENABLED or roi_box is None:
+        return True
+    
+    center_x, center_y = get_bbox_center(x1, y1, x2, y2)
+    
+    return (roi_box['x1'] <= center_x <= roi_box['x2'] and 
+            roi_box['y1'] <= center_y <= roi_box['y2'])
+
+def draw_roi(frame):
+    """Draw the ROI box on the frame"""
+    if not ROI_ENABLED or roi_box is None:
+        return
+    
+    # Draw ROI rectangle with semi-transparent overlay
+    overlay = frame.copy()
+    cv2.rectangle(overlay, 
+                  (roi_box['x1'], roi_box['y1']), 
+                  (roi_box['x2'], roi_box['y2']), 
+                  (0, 255, 255),  # Yellow
+                  -1)  # Fill the rectangle
+    
+    # Blend the overlay with the original frame (make it semi-transparent)
+    cv2.addWeighted(overlay, 0.1, frame, 0.9, 0, frame)
+    
+    # Draw ROI border
+    cv2.rectangle(frame, 
+                  (roi_box['x1'], roi_box['y1']), 
+                  (roi_box['x2'], roi_box['y2']), 
+                  (0, 255, 255),  # Yellow
+                  3)
+    
+    # Add ROI label
+    cv2.putText(frame, "COUNTING ZONE", 
+                (roi_box['x1'] + 10, roi_box['y1'] + 30),
+                cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 255, 255), 2)
 
 # I2C Helper Functions
 def read_reg(bus, reg):
@@ -243,29 +343,175 @@ def classify_object(class_id, labels):
         print(f"Classification error for class_id {class_id}: {e}")
         return None
 
-def send_to_cloud():
-    """Send count data to cloud server in API-compatible format"""
+def cleanup_old_tracks(current_frame):
+    """Clean up old track lifecycle data to prevent memory issues"""
+    global track_lifecycle, counted_tracks, track_persistence, track_id_class_map
+    
+    tracks_to_remove = []
+    for track_id, info in track_lifecycle.items():
+        if current_frame - info['last_seen'] > TRACK_MEMORY_FRAMES:
+            tracks_to_remove.append(track_id)
+    
+    for track_id in tracks_to_remove:
+        track_lifecycle.pop(track_id, None)
+        track_persistence.pop(track_id, None)
+        track_id_class_map.pop(track_id, None)
+        # Note: We don't remove from counted_tracks to maintain count accuracy
+
+def should_count_track(track_id, category, confidence, current_frame, threshold, bbox):
+    """Determine if a track should be counted based on improved logic with ROI"""
+    global track_lifecycle, counted_tracks, track_persistence
+    
+    # Skip if already counted
+    if track_id in counted_tracks:
+        return False
+    
+    # Skip if confidence too low
+    if confidence < threshold:
+        return False
+    
+    # Check if object is in ROI (using center point method for more accurate counting)
+    x1, y1, x2, y2 = bbox
+    in_roi = is_center_in_roi(x1, y1, x2, y2)
+    
+    # Initialize or update track lifecycle
+    if track_id not in track_lifecycle:
+        track_lifecycle[track_id] = {
+            'first_seen': current_frame,
+            'last_seen': current_frame,
+            'counted': False,
+            'category': category,
+            'confidence_history': [confidence],
+            'in_roi': in_roi,
+            'was_in_roi': in_roi  # Track if it was ever in ROI
+        }
+        
+        # Only count if in ROI
+        if in_roi:
+            return True
+        else:
+            return False
+    else:
+        # Update existing track
+        track_info = track_lifecycle[track_id]
+        track_info['last_seen'] = current_frame
+        track_info['confidence_history'].append(confidence)
+        
+        # Keep only recent confidence values
+        if len(track_info['confidence_history']) > 5:
+            track_info['confidence_history'] = track_info['confidence_history'][-5:]
+        
+        # Update category if needed
+        track_info['category'] = category
+        
+        # Update ROI status
+        prev_in_roi = track_info['in_roi']
+        track_info['in_roi'] = in_roi
+        
+        # Track if it was ever in ROI
+        if in_roi:
+            track_info['was_in_roi'] = True
+        
+        # Don't count again if already counted
+        return False
+
+def cloud_worker():
+    """Background thread worker for handling cloud sync without blocking main thread"""
+    global cloud_running, connection_status, last_successful_sync
+    
+    while cloud_running:
+        try:
+            # Get data from queue with timeout
+            data = cloud_queue.get(timeout=1.0)
+            
+            try:
+                # Attempt to send data with short timeout
+                response = requests.post(CLOUD_API_URL, json=data, timeout=CLOUD_TIMEOUT)
+                response.raise_for_status()
+                
+                connection_status = "Connected"
+                last_successful_sync = time.time()
+                print(f"? Cloud sync: {data} (Queue: {cloud_queue.qsize()})")
+                
+                # Mark task as done
+                cloud_queue.task_done()
+                
+            except requests.exceptions.RequestException as e:
+                connection_status = f"Error: {type(e).__name__}"
+                print(f"? Cloud sync failed: {e}")
+                
+                # Put data back in queue if there's space (retry logic)
+                try:
+                    cloud_queue.put_nowait(data)
+                except queue.Full:
+                    print("Cloud queue full, dropping oldest data")
+                    try:
+                        cloud_queue.get_nowait()  # Remove oldest
+                        cloud_queue.put_nowait(data)  # Add current
+                    except queue.Empty:
+                        pass
+                
+                # Mark task as done even if failed
+                cloud_queue.task_done()
+                
+                # Sleep longer on connection errors to avoid spam
+                time.sleep(min(30, max(5, time.time() - last_successful_sync)))
+                
+        except queue.Empty:
+            # No data to process, continue loop
+            continue
+        except Exception as e:
+            print(f"Cloud worker error: {e}")
+            time.sleep(1)
+
+def queue_cloud_data():
+    """Queue data for cloud sync without blocking main thread"""
     current_power, energy_consumed = get_power_consumption()
     
-    # Send data in the exact format your API expects
     data = {
         "car_count": category_counts["car"],
         "truck_count": category_counts["truck"],
         "bike_count": category_counts["bike"],
         "ped_count": category_counts["person"],
-        "battery_percentage": round(energy_consumed, 3)  # Store energy consumption as "battery_percentage"
+        "battery_percentage": round(energy_consumed, 3)
     }
+    
     try:
-        response = requests.post(CLOUD_API_URL, json=data, timeout=5)
-        response.raise_for_status()
-        print(f"Data sent: {data} (Power: {current_power:.2f}W, Energy: {energy_consumed:.3f}Wh)")
+        # Non-blocking queue add
+        cloud_queue.put_nowait(data)
         return True
-    except Exception as e:
-        print(f"Cloud error: {e}")
-        return False
+    except queue.Full:
+        print("Cloud queue full, dropping data")
+        # Remove oldest item and add new one
+        try:
+            cloud_queue.get_nowait()
+            cloud_queue.put_nowait(data)
+            return True
+        except queue.Empty:
+            return False
+
+def start_cloud_sync():
+    """Start the background cloud sync thread"""
+    global cloud_thread, cloud_running
+    
+    cloud_running = True
+    cloud_thread = threading.Thread(target=cloud_worker, daemon=True)
+    cloud_thread.start()
+    print("Cloud sync thread started")
+
+def stop_cloud_sync():
+    """Stop the background cloud sync thread"""
+    global cloud_running, cloud_thread
+    
+    cloud_running = False
+    if cloud_thread and cloud_thread.is_alive():
+        print("Stopping cloud sync thread...")
+        cloud_thread.join(timeout=5)
+        if cloud_thread.is_alive():
+            print("Warning: Cloud thread did not stop gracefully")
 
 def main():
-    global bus
+    global bus, last_sync_attempt, ROI_ENABLED
     
     default_model_dir = '../all_models'
     default_model = 'mobilenet_ssd_v2_coco_quant_postprocess_edgetpu.tflite'
@@ -285,7 +531,14 @@ def main():
                         help='Disable power monitoring (useful if INA226 not available)')
     parser.add_argument('--no-recording', action='store_true',
                         help='Disable video recording')
+    parser.add_argument('--no-cloud', action='store_true',
+                        help='Disable cloud sync')
+    parser.add_argument('--no-roi', action='store_true',
+                        help='Disable Region of Interest filtering')
     args = parser.parse_args()
+
+    # Set ROI status based on argument
+    ROI_ENABLED = not args.no_roi
 
     print('Loading {} with {} labels.'.format(args.model, args.labels))
     interpreter = make_interpreter(args.model)
@@ -307,6 +560,12 @@ def main():
     else:
         print("Power monitoring disabled")
 
+    # Initialize cloud sync
+    if not args.no_cloud:
+        start_cloud_sync()
+    else:
+        print("Cloud sync disabled")
+
     # Initialize video recording
     if not args.no_recording:
         setup_recording_directory()
@@ -321,24 +580,31 @@ def main():
     cap.set(3, 1280)  # Width
     cap.set(4, 720)   # Height
 
-    # Initialize SORT tracker with original working parameters
+    # Initialize SORT tracker with permissive parameters to ensure tracks are created
     tracker = Sort(max_age=15, min_hits=1, iou_threshold=0.3)
 
     # FPS variables
     start_time = time.time()
     frame_count = 0
     last_sent_time = time.time()
+    roi_initialized = False
     
     cv2.namedWindow("Object Counter", cv2.WINDOW_NORMAL)
     fullscreen = False
 
     print("Starting detection and tracking...")
     print("Tracking categories: car, truck, bike, person")
+    if ROI_ENABLED:
+        print("Region of Interest: ENABLED (counting zone = half screen width, centered)")
+    else:
+        print("Region of Interest: DISABLED")
     if bus:
         print("Power monitoring: ENABLED")
     if not args.no_recording:
         print("Video recording: ENABLED")
-    print("Press 'f' for fullscreen, 'ESC' to quit")
+    if not args.no_cloud:
+        print("Cloud sync: ENABLED (non-blocking)")
+    print("Press 'f' for fullscreen, 'r' to toggle ROI, 'ESC' to quit")
 
     try:
         while cap.isOpened():
@@ -349,6 +615,16 @@ def main():
             frame_count += 1
             current_time = time.time()
             new_detections = False
+
+            # Initialize ROI on first frame
+            if not roi_initialized and ROI_ENABLED:
+                height, width = frame.shape[:2]
+                setup_roi(width, height)
+                roi_initialized = True
+
+            # Clean up old tracks periodically
+            if frame_count % TRACK_CLEANUP_INTERVAL == 0:
+                cleanup_old_tracks(frame_count)
 
             # Record frame if recording is enabled (reduced frequency to preserve performance)
             if not args.no_recording:
@@ -396,6 +672,10 @@ def main():
                 # Continue tracking with existing information
                 trackers = tracker.update(np.empty((0, 5)))
 
+            # Draw ROI first (so it appears behind objects)
+            if ROI_ENABLED:
+                draw_roi(frame)
+
             # Process tracks and draw boxes every frame
             for track in trackers:
                 x1, y1, x2, y2, track_id = map(int, track[:5])
@@ -407,59 +687,103 @@ def main():
                 
                 # Draw bounding box and label if confidence is sufficient
                 if category and confidence is not None:
-                    color = COLORS.get(category, (255, 255, 255))
-                    label = f"{category} ID:{track_id} {confidence:.1%}"
-                    cv2.rectangle(frame, (x1, y1), (x2, y2), color, 2)
+                    # Check if object is in ROI
+                    in_roi = is_center_in_roi(x1, y1, x2, y2) if ROI_ENABLED else True
+                    
+                    # Choose color based on ROI status
+                    base_color = COLORS.get(category, (255, 255, 255))
+                    if ROI_ENABLED:
+                        # Dim the color if outside ROI
+                        color = base_color if in_roi else tuple(c // 3 for c in base_color)
+                        roi_status = " [IN]" if in_roi else " [OUT]"
+                    else:
+                        color = base_color
+                        roi_status = ""
+                    
+                    # Add status indicator for counted tracks
+                    count_status = " ?" if track_id in counted_tracks else ""
+                    label = f"{category} ID:{track_id} {confidence:.1%}{roi_status}{count_status}"
+                    
+                    # Draw thicker border for objects in ROI
+                    thickness = 3 if (in_roi and ROI_ENABLED) else 2
+                    cv2.rectangle(frame, (x1, y1), (x2, y2), color, thickness)
                     cv2.putText(frame, label, (x1, y1-10),
                                cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 2)
 
-                # Count new tracks with a small persistence requirement to reduce double counting
-                if (track_id not in counted_tracks and 
-                    category and 
+                # Improved counting logic with ROI
+                if (category and 
                     confidence is not None and 
-                    confidence >= args.threshold):
+                    should_count_track(track_id, category, confidence, frame_count, args.threshold, (x1, y1, x2, y2))):
                     
-                    # Track persistence: only count after object has been tracked for a few frames
-                    if track_id not in track_persistence:
-                        track_persistence[track_id] = frame_count
-                    
-                    # Count the object after it's been tracked for at least 3 frames
-                    if frame_count - track_persistence[track_id] >= 3:
-                        counted_tracks.add(track_id)
-                        category_counts[category] += 1
-                        new_detections = True
-                        print(f"New {category} detected! ID:{track_id} Total: {category_counts[category]}")
+                    counted_tracks.add(track_id)
+                    track_lifecycle[track_id]['counted'] = True
+                    category_counts[category] += 1
+                    new_detections = True
+                    roi_msg = " (in ROI)" if ROI_ENABLED else ""
+                    print(f"New {category} detected{roi_msg}! ID:{track_id} (conf: {confidence:.1%}) Total: {category_counts[category]}")
 
             # Get current power consumption for display
             current_power, energy_consumed = get_power_consumption()
 
-            # Cloud sync logic
-            if new_detections or (current_time - last_sent_time) > 5:
-                if send_to_cloud():
+            # Non-blocking cloud sync logic
+            if not args.no_cloud and (new_detections or (current_time - last_sent_time) > CLOUD_SYNC_INTERVAL):
+                if queue_cloud_data():
                     last_sent_time = current_time
-                    cv2.putText(frame, "Data Sent!", (50, 50), 
-                                cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
 
             # Display info
             fps = frame_count / (current_time - start_time)
             cv2.putText(frame, f"FPS: {fps:.1f}", (50, 100), 
                        cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
             
+            # Display ROI status
+            if ROI_ENABLED:
+                cv2.putText(frame, "ROI: ENABLED", (50, 130), 
+                           cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 255), 2)
+            else:
+                cv2.putText(frame, "ROI: DISABLED", (50, 130), 
+                           cv2.FONT_HERSHEY_SIMPLEX, 0.7, (128, 128, 128), 2)
+            
             # Display power information
             if bus:
-                cv2.putText(frame, f"Power: {current_power:.2f}W", (50, 130), 
+                cv2.putText(frame, f"Power: {current_power:.2f}W", (50, 160), 
                            cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 0), 2)
-                cv2.putText(frame, f"Energy: {energy_consumed:.3f}Wh", (50, 160), 
+                cv2.putText(frame, f"Energy: {energy_consumed:.3f}Wh", (50, 190), 
                            cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 0), 2)
+            
+            # Display connection status
+            if not args.no_cloud:
+                queue_size = cloud_queue.qsize()
+                status_color = (0, 255, 0) if connection_status == "Connected" else (0, 0, 255)
+                y_pos = 220 if bus else 160
+                cv2.putText(frame, f"Cloud: {connection_status}", (50, y_pos), 
+                           cv2.FONT_HERSHEY_SIMPLEX, 0.6, status_color, 2)
+                if queue_size > 0:
+                    cv2.putText(frame, f"Queue: {queue_size}", (50, y_pos + 30), 
+                               cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 0), 2)
             
             # Display recording status
             if not args.no_recording and recording_start_time:
                 elapsed = int(time.time() - recording_start_time)
                 remaining = RECORDING_DURATION - elapsed
+                y_pos = 280 if not args.no_cloud and bus else (240 if bus or not args.no_cloud else 190)
                 cv2.putText(frame, f"Recording: {elapsed//60:02d}:{elapsed%60:02d}", 
-                           (50, 190), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 255), 2)
+                           (50, y_pos), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 255), 2)
             
-            y_offset = 220
+            # Display tracking statistics
+            active_tracks = len([t for t in track_lifecycle.values() if frame_count - t['last_seen'] < 30])
+            roi_tracks = len([t for t in track_lifecycle.values() 
+                            if frame_count - t['last_seen'] < 30 and t.get('in_roi', False)]) if ROI_ENABLED else active_tracks
+            
+            y_pos = 310 if not args.no_cloud and bus else (270 if bus or not args.no_cloud else 220)
+            if ROI_ENABLED:
+                cv2.putText(frame, f"Active Tracks: {active_tracks} (ROI: {roi_tracks})", 
+                           (50, y_pos), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 0, 255), 2)
+            else:
+                cv2.putText(frame, f"Active Tracks: {active_tracks}", 
+                           (50, y_pos), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 0, 255), 2)
+            
+            # Display category counts
+            y_offset = y_pos + 30
             for category, count in category_counts.items():
                 cv2.putText(frame, f"{category.capitalize()}: {count}", 
                            (50, y_offset), cv2.FONT_HERSHEY_SIMPLEX, 
@@ -473,6 +797,15 @@ def main():
                 fullscreen = not fullscreen
                 cv2.setWindowProperty("Object Counter", cv2.WND_PROP_FULLSCREEN,
                                     cv2.WINDOW_FULLSCREEN if fullscreen else cv2.WINDOW_NORMAL)
+            elif key == ord('r'):
+                # Toggle ROI
+                ROI_ENABLED = not ROI_ENABLED
+                if ROI_ENABLED:
+                    height, width = frame.shape[:2]
+                    setup_roi(width, height)
+                    print("ROI enabled")
+                else:
+                    print("ROI disabled")
             elif key == 27:  # ESC key
                 break
 
@@ -482,6 +815,8 @@ def main():
         cv2.destroyAllWindows()
         if not args.no_recording:
             stop_recording()
+        if not args.no_cloud:
+            stop_cloud_sync()
         if bus:
             bus.close()
         print("Final counts:", category_counts)
